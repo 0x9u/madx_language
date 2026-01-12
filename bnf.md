@@ -57,7 +57,8 @@
 
 <block>          ::= "{" <statements> "}"
 <statements>     ::= <statement> | <statement> <statements>
-<statement>      ::= <assignment> ";" | <expr> | <return-stmt>
+<!-- ? Label -->
+<statement>      ::= (<ident>":")? (<assignment> ";" | <expr> | <return-stmt>)
 
 <new-statement> ::= "new" <identifier>
 

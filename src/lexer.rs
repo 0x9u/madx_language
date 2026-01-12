@@ -60,6 +60,9 @@ enum Tokens {
 
     ARROW,
 
+    COLON, // used for labels
+    SEMICOLON,
+
     LBRACE,
     RBRACE,
 
@@ -74,6 +77,8 @@ enum Tokens {
     IF,
     ELSE,
     FOR, // no while statement, while is covered by for
+
+    GOTO,
 
     STRUCT,
     UNION,
@@ -211,6 +216,8 @@ impl Lexer {
                 '[' => return Result::Ok(Tokens::LBRACKET),
                 ']' => return Result::Ok(Tokens::RBRACKET),
                 '.' => return Result::Ok(Tokens::DOT),
+                ':' => return Result::Ok(Tokens::COLON),
+                ';' => return Result::Ok(Tokens::SEMICOLON),
                 '\'' => return Result::Ok(Tokens::SINGLEQUOTE),
                 '"' => {
                     let str = self.scan_string()?;
@@ -259,11 +266,11 @@ impl Lexer {
         }
     }
 
-    fn scan_base(&mut self, base: i32) -> Result<i32> {
+    fn scan_base(&mut self, base: u32) -> Result<i32> {
         let mut num = 0_i32;
 
         while let Some(c) = self.consume()? {
-            if let Some(d) = c.to_digit(10) {
+            if let Some(d) = c.to_digit(base) {
                 num += d as i32;
             } else {
                 self.putback(c);
@@ -282,6 +289,7 @@ impl Lexer {
             "if" => Ok(Tokens::IF),
             "else" => Ok(Tokens::ELSE),
             "for" => Ok(Tokens::FOR),
+            "goto" => Ok(Tokens::GOTO),
             "struct" => Ok(Tokens::STRUCT),
             "union" => Ok(Tokens::UNION),
             "u0" => Ok(Tokens::U0),
