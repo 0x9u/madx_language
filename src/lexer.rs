@@ -1,22 +1,57 @@
+#![allow(dead_code)] // for now until the rest is made
+
 use thiserror::Error;
 
 use std::{
-    collections::VecDeque, fs::File, io::{self, BufReader}, result
+    collections::VecDeque, fmt::{self, Display}, io::{self, BufReader, Read}, result
 };
 use utf8_chars::BufReadCharsExt;
 
 pub type Result<T> = result::Result<T, LexerError>;
 
-#[derive(Debug, Error)]
-pub enum LexerError {
-    #[error("{0}")]
-    Msg(String),
+// since io::Error is not PartialEq
+#[derive(Debug)]
+pub struct LexerIoError(pub io::Error);
 
-    #[error(transparent)]
-    Io(#[from] io::Error),
+#[derive(Debug, Error, PartialEq)]
+pub enum LexerError {
+    #[error("Lexer Error: Unterminated String")]
+    UnterminatedString,
+
+    #[error("Lexer Error: Unterminated Character Constant")]
+    UnterminatedCharacterConstant,
+
+    #[error("Lexer Error: > 1 Character in Character Constant")]
+    CharacterConstantTooLong,
+
+    #[error("Lexer Error: Integer Overflow")]
+    IntegerOverflow,
+
+    #[error("Lexer Error: IO Error: {0}")]
+    Io(LexerIoError),
 }
 
-enum Tokens {
+impl PartialEq for LexerIoError {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.kind() == other.0.kind()
+    }
+}
+
+impl Display for LexerIoError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<io::Error> for LexerError {
+    fn from(e: io::Error) -> Self {
+        LexerError::Io(LexerIoError(e))
+    }
+}
+
+
+#[derive(PartialEq, Eq, Debug)]
+pub enum Tokens {
     ASSIGN,
 
     LOGAND,
@@ -66,7 +101,7 @@ enum Tokens {
     LBRACE,
     RBRACE,
 
-    SINGLEQUOTE,
+    CHAR(char),
     STRING(String),
 
     NUMBER(i32),
@@ -90,16 +125,15 @@ enum Tokens {
     EOF,
 }
 
-struct Lexer {
-    input_buf: BufReader<File>,
+pub struct Lexer<R: Read> {
+    input_buf: BufReader<R>,
     putback_buf: VecDeque<char>,
 }
 
-impl Lexer {
-    pub fn new(input_path: String) -> Result<Self> {
-        let file = File::open(input_path)?;
+impl<R: Read> Lexer<R> {
+    pub fn new(input: R) -> Result<Self> {
         Ok(Self {
-            input_buf: BufReader::new(file),
+            input_buf: BufReader::new(input),
             putback_buf: VecDeque::new(),
         })
     }
@@ -120,6 +154,7 @@ impl Lexer {
 
     pub fn scan_token(&mut self) -> Result<Tokens> {
         while let Some(c) = self.consume()? {
+            // TODO: skip comments (// and /* */)
             if c.is_whitespace() {
                 continue;
             }
@@ -139,7 +174,7 @@ impl Lexer {
                 }
                 '|' => {
                     if let Some(c) = self.consume()? {
-                        if c == '&' {
+                        if c == '|' {
                             return Result::Ok(Tokens::LOGOR);
                         } else {
                             self.putback(c);
@@ -162,13 +197,26 @@ impl Lexer {
                     }
                 }
 
+                '!' => {
+                    if let Some(c) = self.consume()? {
+                        if c == '=' {
+                            return Result::Ok(Tokens::NEQ);
+                        } else {
+                            self.putback(c);
+                            return Result::Ok(Tokens::NOT);
+                        }
+                    } else {
+                        return Result::Ok(Tokens::NOT);
+                    }
+                }
+
                 '<' => {
                     if let Some(c) = self.consume()? {
                         if c == '=' {
                             return Result::Ok(Tokens::LTE);
                         } else if c == '<' {
                             return Result::Ok(Tokens::LSHIFT);
-                        } else  {
+                        } else {
                             self.putback(c);
                             return Result::Ok(Tokens::LT);
                         }
@@ -204,12 +252,11 @@ impl Lexer {
                     } else {
                         return Result::Ok(Tokens::MINUS);
                     }
-                },
+                }
                 '+' => return Result::Ok(Tokens::PLUS),
                 '*' => return Result::Ok(Tokens::ASTERISK),
                 '/' => return Result::Ok(Tokens::DIVIDE),
                 '%' => return Result::Ok(Tokens::MODULO),
-                '!' => return Result::Ok(Tokens::NOT),
                 '~' => return Result::Ok(Tokens::BITNOT),
                 '(' => return Result::Ok(Tokens::LPARENT),
                 ')' => return Result::Ok(Tokens::RPARENT),
@@ -218,10 +265,13 @@ impl Lexer {
                 '.' => return Result::Ok(Tokens::DOT),
                 ':' => return Result::Ok(Tokens::COLON),
                 ';' => return Result::Ok(Tokens::SEMICOLON),
-                '\'' => return Result::Ok(Tokens::SINGLEQUOTE),
+                '\'' => {
+                    let chr = self.scan_char()?;
+                    return Result::Ok(Tokens::CHAR(chr));
+                }
                 '"' => {
                     let str = self.scan_string()?;
-                    return Result::Ok(Tokens::STRING(str))
+                    return Result::Ok(Tokens::STRING(str));
                 }
 
                 _ => {
@@ -268,10 +318,13 @@ impl Lexer {
 
     fn scan_base(&mut self, base: u32) -> Result<i32> {
         let mut num = 0_i32;
-
         while let Some(c) = self.consume()? {
             if let Some(d) = c.to_digit(base) {
-                num += d as i32;
+                num *= base as i32;
+                num = match num.checked_add(d as i32) {
+                    Some(n) => n,
+                    None => return Result::Err(LexerError::IntegerOverflow),
+                }
             } else {
                 self.putback(c);
                 break;
@@ -317,7 +370,7 @@ impl Lexer {
 
     fn scan_string(&mut self) -> Result<String> {
         let mut str = String::new();
-        
+
         while let Some(c) = self.consume()? {
             if c == '\"' {
                 return Result::Ok(str);
@@ -337,11 +390,29 @@ impl Lexer {
                     }
                     continue;
                 }
-            } 
+            }
 
             str.push(c);
         }
 
-        Result::Err(LexerError::Msg("Unterminated String".to_string()))
+        Result::Err(LexerError::UnterminatedString)
+    }
+
+    fn scan_char(&mut self) -> Result<char> {
+        // ? NOTE: I didn't putback on error since string doesn't do that as well
+        
+        if let Some(c) = self.consume()? {
+            if let Some(c2) = self.consume()? {
+                if c2 == '\'' {
+                    return Result::Ok(c);
+                } else {
+                    return Result::Err(LexerError::CharacterConstantTooLong);
+                }
+            } else {
+                return Result::Err(LexerError::UnterminatedCharacterConstant);
+            }
+        } else {
+            return Result::Err(LexerError::UnterminatedCharacterConstant);
+        }
     }
 }
