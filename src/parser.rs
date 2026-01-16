@@ -132,22 +132,19 @@ impl<R: Read> Parser<R> {
     }
 
     fn assign(&mut self) -> Result<AST> {
-        let mut left = self.add()?;
+        let left = self.add()?;
 
-        while matches!(left.op, Operation::IDENT(_)) {
-            left = AST {
-                op: if self.lexer.peek()?.clone() == Tokens::ASSIGN {
-                    self.lexer.consume();
-                    Operation::ASSIGN
-                } else {
-                    return Result::Ok(left);
-                },
+        // todo: figure out recursion
+        if self.lexer.peek()?.clone() == Tokens::ASSIGN {
+            self.lexer.consume();
+            Result::Ok(AST {
+                op: Operation::ASSIGN,
                 left: Some(Box::new(left)),
-                right: Some(Box::new(self.add()?)),
-            }
+                right: Some(Box::new(self.assign()?)),
+            })
+        } else {
+            Result::Ok(left)
         }
-
-        Ok(left)
     }
 
     // should be block but whatever
