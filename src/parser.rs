@@ -95,6 +95,7 @@ impl<R: Read> Parser<R> {
                     let v = match self.lexer.peek()?.clone() {
                         Tokens::ASTERISK => Operation::MULTIPLY,
                         Tokens::DIVIDE => Operation::DIVIDE,
+                        Tokens::MODULO => Operation::MODULO,
                         _ => {
                             break Result::Ok(left);
                         }
