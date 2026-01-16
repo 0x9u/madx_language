@@ -26,14 +26,23 @@ impl From<LexerError> for ParserError {
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum Operation {
-    ADD,
-    SUBTRACT,
+    NUMBER(i32),
+    IDENT(String),
+
     MULTIPLY,
     DIVIDE,
     MODULO,
+    ADD,
+    SUBTRACT,
+
+    LSHIFT,
+    RSHIFT,
+
+    BITOR,
+    BITXOR,
+    BITAND,
+
     ASSIGN,
-    NUMBER(i32),
-    IDENT(String),
     GLUE, // to join statements together
 }
 
@@ -132,8 +141,81 @@ impl<R: Read> Parser<R> {
         }
     }
 
+    fn bitwise_shift(&mut self) -> Result<AST> {
+        let mut left = self.add()?;
+
+        loop {
+            left = AST {
+                op: {
+                    let v = match *self.lexer.peek()? {
+                        Tokens::LSHIFT => Operation::LSHIFT,
+                        Tokens::RSHIFT => Operation::RSHIFT,
+                        _ => {
+                            break Result::Ok(left);
+                        }
+                    };
+                    self.lexer.consume();
+                    v
+                },
+                left: Some(Box::new(left)),
+                right: Some(Box::new(self.add()?)),
+            }
+        }
+    }
+
+    fn bitwise_and(&mut self) -> Result<AST> {
+        let mut left = self.bitwise_shift()?;
+
+        loop {
+            left = AST {
+                op: if self.lexer.peek()? == &Tokens::AMPER {
+                    self.lexer.consume();
+                    Operation::BITAND
+                } else {
+                    break Result::Ok(left);
+                },
+                left: Some(Box::new(left)),
+                right: Some(Box::new(self.bitwise_shift()?)),
+            }
+        }
+    }
+
+    fn bitwise_xor(&mut self) -> Result<AST> {
+        let mut left = self.bitwise_and()?;
+
+        loop {
+            left = AST {
+                op: if self.lexer.peek()? == &Tokens::BITXOR {
+                    self.lexer.consume();
+                    Operation::BITXOR
+                } else {
+                    break Result::Ok(left);
+                },
+                left: Some(Box::new(left)),
+                right: Some(Box::new(self.bitwise_and()?)),
+            }
+        }
+    }
+
+    fn bitwise_or(&mut self) -> Result<AST> {
+        let mut left = self.bitwise_xor()?;
+
+        loop {
+            left = AST {
+                op: if self.lexer.peek()? == &Tokens::BITOR {
+                    self.lexer.consume();
+                    Operation::BITOR
+                } else {
+                    break Result::Ok(left);
+                },
+                left: Some(Box::new(left)),
+                right: Some(Box::new(self.bitwise_xor()?)),
+            }
+        }
+    }
+
     fn assign(&mut self) -> Result<AST> {
-        let left = self.add()?;
+        let left = self.bitwise_or()?;
 
         // todo: figure out recursion
         if *self.lexer.peek()? == Tokens::ASSIGN {
@@ -171,7 +253,7 @@ impl<R: Read> Parser<R> {
 
         let mut parent: Option<AST> = None;
 
-        while self.lexer.peek()?.clone() != Tokens::RBRACE {
+        while self.lexer.peek()? != &Tokens::RBRACE {
             if let Some(right) = self.statement()? {
                 if let Some(left) = parent {
                     parent = Some(AST {
