@@ -21,16 +21,16 @@ fn main() {
 
         let lexer = Lexer::new(inp.as_bytes()).unwrap();
         let mut parser = Parser::new(lexer);
-        let exprs = match parser.parse() {
+        let tree = match parser.parse() {
             Ok(v) => v,
             Err(e) => {
                 println!("{0}", e);
                 continue;
             }
         };
-        
-        for expr in exprs {
-            println!("{0}", evaluate(expr, &mut variables));
+
+        if let Some(t) = tree {
+            println!("{0}", evaluate(t, &mut variables));
         }
     }
 }

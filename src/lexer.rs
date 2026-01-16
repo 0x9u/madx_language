@@ -286,6 +286,8 @@ impl<R: Read> Lexer<R> {
                 ')' => return Result::Ok(Tokens::RPARENT),
                 '[' => return Result::Ok(Tokens::LBRACKET),
                 ']' => return Result::Ok(Tokens::RBRACKET),
+                '{' => return Result::Ok(Tokens::LBRACE),
+                '}' => return Result::Ok(Tokens::RBRACE),
                 '.' => return Result::Ok(Tokens::DOT),
                 ':' => return Result::Ok(Tokens::COLON),
                 ';' => return Result::Ok(Tokens::SEMICOLON),
@@ -297,16 +299,11 @@ impl<R: Read> Lexer<R> {
                     let str = self.scan_string()?;
                     return Result::Ok(Tokens::STRING(str));
                 }
-
                 _ => {
                     if c.is_numeric() {
                         self.putback(c); // to be consumed by scan_number
                         let num = self.scan_number()?;
                         return Result::Ok(Tokens::NUMBER(num));
-                    } else if c == '{' {
-                        return Result::Ok(Tokens::LBRACE);
-                    } else if c == '}' {
-                        return Result::Ok(Tokens::RBRACE);
                     } else {
                         self.putback(c); // to be consumed by keyword
                         return self.match_keyword();

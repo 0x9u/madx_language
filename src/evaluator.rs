@@ -35,5 +35,10 @@ pub fn evaluate(ast: AST, vars: &mut HashMap<String, i32>) -> i32 {
                 panic!("{0} is not defined", v)
             }
         }
+        Operation::GLUE => {
+            // aim to return the value of the last line
+            evaluate(*ast.left.unwrap(), vars);
+            evaluate(*ast.right.unwrap(), vars)
+        } 
     }
 }

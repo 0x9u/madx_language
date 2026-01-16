@@ -34,6 +34,7 @@ pub enum Operation {
     ASSIGN,
     NUMBER(i32),
     IDENT(String),
+    GLUE, // to join statements together
 }
 
 pub struct AST {
@@ -61,9 +62,9 @@ impl<R: Read> Parser<R> {
     }
 
     fn factor(&mut self) -> Result<AST> {
-        let t = self.lexer.peek()?.clone();
+        let t = self.lexer.peek()?;
 
-        if t == Tokens::LPARENT {
+        if t == &Tokens::LPARENT {
             self.lexer.consume();
             let tree = self.assign()?;
             self.expect(Tokens::RPARENT)?;
@@ -73,8 +74,8 @@ impl<R: Read> Parser<R> {
                 op: {
                     // todo: make this into a macro
                     let v = match t {
-                        Tokens::NUMBER(v) => Operation::NUMBER(v),
-                        Tokens::IDENT(v) => Operation::IDENT(v),
+                        Tokens::NUMBER(v) => Operation::NUMBER(*v),
+                        Tokens::IDENT(v) => Operation::IDENT(v.clone()),
                         _ => return Result::Err(ParserError::SyntaxError),
                     };
                     self.lexer.consume();
@@ -92,7 +93,7 @@ impl<R: Read> Parser<R> {
         loop {
             left = AST {
                 op: {
-                    let v = match self.lexer.peek()?.clone() {
+                    let v = match *self.lexer.peek()? {
                         Tokens::ASTERISK => Operation::MULTIPLY,
                         Tokens::DIVIDE => Operation::DIVIDE,
                         Tokens::MODULO => Operation::MODULO,
@@ -115,7 +116,7 @@ impl<R: Read> Parser<R> {
         loop {
             left = AST {
                 op: {
-                    let v = match self.lexer.peek()?.clone() {
+                    let v = match *self.lexer.peek()? {
                         Tokens::PLUS => Operation::ADD,
                         Tokens::MINUS => Operation::SUBTRACT,
                         _ => {
@@ -135,7 +136,7 @@ impl<R: Read> Parser<R> {
         let left = self.add()?;
 
         // todo: figure out recursion
-        if self.lexer.peek()?.clone() == Tokens::ASSIGN {
+        if *self.lexer.peek()? == Tokens::ASSIGN {
             self.lexer.consume();
             Result::Ok(AST {
                 op: Operation::ASSIGN,
@@ -147,19 +148,49 @@ impl<R: Read> Parser<R> {
         }
     }
 
-    // should be block but whatever
-    fn statement(&mut self) -> Result<Vec<AST>> {
-        let mut exprs = Vec::new();
+    fn statement(&mut self) -> Result<Option<AST>> {
+        let t = self.lexer.peek()?;
 
-        while self.lexer.peek()? != &Tokens::EOF {
-            exprs.push(self.assign()?);
+        if t == &Tokens::LBRACE {
+            self.compound_statement()
+        } else {
+            // expression statement is optional
+            if t == &Tokens::SEMICOLON {
+                self.lexer.consume();
+                return Result::Ok(None);
+            }
+
+            let tree = self.assign()?;
             self.expect(Tokens::SEMICOLON)?;
+            Result::Ok(Some(tree))
         }
-
-        Result::Ok(exprs)
     }
 
-    pub fn parse(&mut self) -> Result<Vec<AST>> {
+    fn compound_statement(&mut self) -> Result<Option<AST>> {
+        self.expect(Tokens::LBRACE)?;
+
+        let mut parent: Option<AST> = None;
+
+        while self.lexer.peek()?.clone() != Tokens::RBRACE {
+            if let Some(right) = self.statement()? {
+                if let Some(left) = parent {
+                    parent = Some(AST {
+                        op: Operation::GLUE,
+                        left: Some(Box::new(left)),
+                        right: Some(Box::new(right)),
+                    });
+                } else {
+                    parent = Some(right);
+                }
+            }
+        }
+
+        self.expect(Tokens::RBRACE)?;
+
+        Result::Ok(parent)
+    }
+
+    pub fn parse(&mut self) -> Result<Option<AST>> {
         self.statement()
     }
 }
