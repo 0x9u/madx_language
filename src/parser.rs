@@ -25,9 +25,12 @@ impl From<LexerError> for ParserError {
 }
 
 #[derive(PartialEq, Eq, Debug)]
-pub enum Operation {
+pub enum Operation { // todo: define left and right AST enum operations
     NUMBER(i32),
     IDENT(String),
+
+    BITNOT,
+    NEGATE,
 
     MULTIPLY,
     DIVIDE,
@@ -96,8 +99,34 @@ impl<R: Read> Parser<R> {
         }
     }
 
+    fn unary(&mut self) -> Result<AST> {
+        match *self.lexer.peek()? {
+            Tokens::PLUS => {
+                self.lexer.consume();
+                self.unary()
+            } // literally useless
+            Tokens::MINUS => {
+                self.lexer.consume();
+                Result::Ok(AST {
+                    op: Operation::NEGATE,
+                    left: Some(Box::new(self.unary()?)),
+                    right: None,
+                })
+            }
+            Tokens::BITNOT => {
+                self.lexer.consume();
+                Result::Ok(AST {
+                    op: Operation::BITNOT,
+                    left: Some(Box::new(self.unary()?)),
+                    right: None,
+                })
+            }
+            _ => self.factor(),
+        }
+    }
+
     fn mult(&mut self) -> Result<AST> {
-        let mut left = self.factor()?;
+        let mut left = self.unary()?;
 
         loop {
             left = AST {

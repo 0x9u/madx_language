@@ -42,6 +42,12 @@ pub fn evaluate(ast: AST, vars: &mut HashMap<String, i32>) -> i32 {
         Operation::BITOR => {
             evaluate(*ast.left.unwrap(), vars) | evaluate(*ast.right.unwrap(), vars)
         },
+        Operation::NEGATE => {
+            -evaluate(*ast.left.unwrap(), vars)
+        },
+        Operation::BITNOT => {
+            !evaluate(*ast.left.unwrap(), vars)
+        },
         Operation::NUMBER(v) => v,
         Operation::IDENT(v) => {
             if let Some(v) = vars.get(&v) {
