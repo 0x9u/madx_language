@@ -61,20 +61,29 @@ impl<R: Read> Parser<R> {
     }
 
     fn factor(&mut self) -> Result<AST> {
-        Result::Ok(AST {
-            op: {
-                // todo: make this into a macro
-                let v = match self.lexer.peek()?.clone() {
-                    Tokens::NUMBER(v) => Operation::NUMBER(v),
-                    Tokens::IDENT(v) => Operation::IDENT(v),
-                    _ => return Result::Err(ParserError::SyntaxError),
-                };
-                self.lexer.consume();
-                v
-            },
-            left: None,
-            right: None,
-        })
+        let t = self.lexer.peek()?.clone();
+
+        if t == Tokens::LPARENT {
+            self.lexer.consume();
+            let tree = self.assign()?;
+            self.expect(Tokens::RPARENT)?;
+            Result::Ok(tree)
+        } else {
+            Result::Ok(AST {
+                op: {
+                    // todo: make this into a macro
+                    let v = match t {
+                        Tokens::NUMBER(v) => Operation::NUMBER(v),
+                        Tokens::IDENT(v) => Operation::IDENT(v),
+                        _ => return Result::Err(ParserError::SyntaxError),
+                    };
+                    self.lexer.consume();
+                    v
+                },
+                left: None,
+                right: None,
+            })
+        }
     }
 
     fn mult(&mut self) -> Result<AST> {
@@ -142,7 +151,6 @@ impl<R: Read> Parser<R> {
 
     // should be block but whatever
     fn statement(&mut self) -> Result<Vec<AST>> {
-
         let mut exprs = Vec::new();
 
         while self.lexer.peek()? != &Tokens::EOF {
