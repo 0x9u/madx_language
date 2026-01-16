@@ -49,8 +49,8 @@ impl From<io::Error> for LexerError {
     }
 }
 
-
-#[derive(PartialEq, Eq, Debug)]
+// todo: implement Display for Tokens
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Tokens {
     ASSIGN,
 
@@ -125,21 +125,24 @@ pub enum Tokens {
     EOF,
 }
 
+// todo: keep track of lines
 pub struct Lexer<R: Read> {
     input_buf: BufReader<R>,
-    putback_buf: VecDeque<char>,
+    char_putback_buf: VecDeque<char>,
+    token_putback_buf: Option<Tokens>
 }
 
 impl<R: Read> Lexer<R> {
     pub fn new(input: R) -> Result<Self> {
         Ok(Self {
             input_buf: BufReader::new(input),
-            putback_buf: VecDeque::new(),
+            char_putback_buf: VecDeque::new(),
+            token_putback_buf : None,
         })
     }
 
-    fn consume(&mut self) -> Result<Option<char>> {
-        if let Some(c) = self.putback_buf.pop_front() {
+    fn read(&mut self) -> Result<Option<char>> {
+        if let Some(c) = self.char_putback_buf.pop_front() {
             Result::Ok(Some(c))
         } else if let Some(c) = self.input_buf.read_char()? {
             Result::Ok(Some(c))
@@ -149,11 +152,32 @@ impl<R: Read> Lexer<R> {
     }
 
     fn putback(&mut self, c: char) {
-        self.putback_buf.push_back(c);
+        self.char_putback_buf.push_back(c);
+    }
+    
+    pub fn peek(&mut self) -> Result<&Tokens> {
+        if self.token_putback_buf.is_none() {
+            self.token_putback_buf = Some(self.scan_token()?);
+        }
+
+       self.token_putback_buf.as_ref().ok_or_else(|| unreachable!())
     }
 
-    pub fn scan_token(&mut self) -> Result<Tokens> {
-        while let Some(c) = self.consume()? {
+    pub fn consume(&mut self) {
+        self.token_putback_buf = None
+    }
+
+    pub fn take(&mut self) -> Result<Tokens> {
+        match self.token_putback_buf.take() {
+            Some(t) => Ok(t),
+            None => {
+                self.scan_token()
+            }
+        }
+    }
+
+    fn scan_token(&mut self) -> Result<Tokens> {
+        while let Some(c) = self.read()? {
             // TODO: skip comments (// and /* */)
             if c.is_whitespace() {
                 continue;
@@ -161,7 +185,7 @@ impl<R: Read> Lexer<R> {
 
             match c {
                 '&' => {
-                    if let Some(c) = self.consume()? {
+                    if let Some(c) = self.read()? {
                         if c == '&' {
                             return Result::Ok(Tokens::LOGAND);
                         } else {
@@ -173,7 +197,7 @@ impl<R: Read> Lexer<R> {
                     }
                 }
                 '|' => {
-                    if let Some(c) = self.consume()? {
+                    if let Some(c) = self.read()? {
                         if c == '|' {
                             return Result::Ok(Tokens::LOGOR);
                         } else {
@@ -185,7 +209,7 @@ impl<R: Read> Lexer<R> {
                     }
                 }
                 '=' => {
-                    if let Some(c) = self.consume()? {
+                    if let Some(c) = self.read()? {
                         if c == '=' {
                             return Result::Ok(Tokens::EQ);
                         } else {
@@ -198,7 +222,7 @@ impl<R: Read> Lexer<R> {
                 }
 
                 '!' => {
-                    if let Some(c) = self.consume()? {
+                    if let Some(c) = self.read()? {
                         if c == '=' {
                             return Result::Ok(Tokens::NEQ);
                         } else {
@@ -211,7 +235,7 @@ impl<R: Read> Lexer<R> {
                 }
 
                 '<' => {
-                    if let Some(c) = self.consume()? {
+                    if let Some(c) = self.read()? {
                         if c == '=' {
                             return Result::Ok(Tokens::LTE);
                         } else if c == '<' {
@@ -226,7 +250,7 @@ impl<R: Read> Lexer<R> {
                 }
 
                 '>' => {
-                    if let Some(c) = self.consume()? {
+                    if let Some(c) = self.read()? {
                         if c == '=' {
                             return Result::Ok(Tokens::GTE);
                         } else if c == '>' {
@@ -242,7 +266,7 @@ impl<R: Read> Lexer<R> {
 
                 '^' => return Result::Ok(Tokens::BITXOR),
                 '-' => {
-                    if let Some(c) = self.consume()? {
+                    if let Some(c) = self.read()? {
                         if c == '>' {
                             return Result::Ok(Tokens::ARROW);
                         } else {
@@ -297,9 +321,9 @@ impl<R: Read> Lexer<R> {
     // NEGATIVE NUMBERS TO BE HANDLED BY PARSER
     fn scan_number(&mut self) -> Result<i32> {
         // safe to unwrap twice since we know we putback
-        let c = self.consume().unwrap().unwrap();
+        let c = self.read().unwrap().unwrap();
         if c == '0' {
-            if let Some(c) = self.consume()? {
+            if let Some(c) = self.read()? {
                 if c == 'x' {
                     self.scan_base(16)
                 } else {
@@ -318,7 +342,7 @@ impl<R: Read> Lexer<R> {
 
     fn scan_base(&mut self, base: u32) -> Result<i32> {
         let mut num = 0_i32;
-        while let Some(c) = self.consume()? {
+        while let Some(c) = self.read()? {
             if let Some(d) = c.to_digit(base) {
                 num *= base as i32;
                 num = match num.checked_add(d as i32) {
@@ -356,7 +380,7 @@ impl<R: Read> Lexer<R> {
     fn scan_ident(&mut self) -> Result<String> {
         let mut ident = String::new();
 
-        while let Some(c) = self.consume()? {
+        while let Some(c) = self.read()? {
             if !c.is_alphanumeric() {
                 self.putback(c);
                 break;
@@ -371,13 +395,13 @@ impl<R: Read> Lexer<R> {
     fn scan_string(&mut self) -> Result<String> {
         let mut str = String::new();
 
-        while let Some(c) = self.consume()? {
+        while let Some(c) = self.read()? {
             if c == '\"' {
                 return Result::Ok(str);
             }
 
             if c == '\\' {
-                if let Some(escape_chr) = self.consume()? {
+                if let Some(escape_chr) = self.read()? {
                     match escape_chr {
                         'n' => str.push('\n'),
                         'r' => str.push('\r'),
@@ -401,8 +425,8 @@ impl<R: Read> Lexer<R> {
     fn scan_char(&mut self) -> Result<char> {
         // ? NOTE: I didn't putback on error since string doesn't do that as well
         
-        if let Some(c) = self.consume()? {
-            if let Some(c2) = self.consume()? {
+        if let Some(c) = self.read()? {
+            if let Some(c2) = self.read()? {
                 if c2 == '\'' {
                     return Result::Ok(c);
                 } else {
