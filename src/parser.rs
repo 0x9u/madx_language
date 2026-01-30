@@ -25,7 +25,8 @@ impl From<LexerError> for ParserError {
 }
 
 #[derive(PartialEq, Eq, Debug)]
-pub enum Operation { // todo: define left and right AST enum operations
+pub enum Operation {
+    // todo: define left and right AST enum operations
     NUMBER(i32),
     IDENT(String),
 
@@ -84,7 +85,6 @@ impl<R: Read> Parser<R> {
         } else {
             Result::Ok(AST {
                 op: {
-                    // todo: make this into a macro
                     let v = match t {
                         Tokens::NUMBER(v) => Operation::NUMBER(*v),
                         Tokens::IDENT(v) => Operation::IDENT(v.clone()),
@@ -126,119 +126,81 @@ impl<R: Read> Parser<R> {
     }
 
     fn mult(&mut self) -> Result<AST> {
-        let mut left = self.unary()?;
-
-        loop {
-            left = AST {
-                op: {
-                    let v = match *self.lexer.peek()? {
-                        Tokens::ASTERISK => Operation::MULTIPLY,
-                        Tokens::DIVIDE => Operation::DIVIDE,
-                        Tokens::MODULO => Operation::MODULO,
-                        _ => {
-                            break Result::Ok(left);
-                        }
-                    };
-                    self.lexer.consume();
-                    v
-                },
-                left: Some(Box::new(left)),
-                right: Some(Box::new(self.factor()?)),
-            }
-        }
+        self.binary_op(Self::unary, |t| match t {
+            Tokens::ASTERISK => Some(Operation::MULTIPLY),
+            Tokens::DIVIDE => Some(Operation::DIVIDE),
+            Tokens::MODULO => Some(Operation::MODULO),
+            _ => None,
+        })
     }
 
     fn add(&mut self) -> Result<AST> {
-        let mut left = self.mult()?;
-
-        loop {
-            left = AST {
-                op: {
-                    let v = match *self.lexer.peek()? {
-                        Tokens::PLUS => Operation::ADD,
-                        Tokens::MINUS => Operation::SUBTRACT,
-                        _ => {
-                            break Result::Ok(left);
-                        }
-                    };
-                    self.lexer.consume();
-                    v
-                },
-                left: Some(Box::new(left)),
-                right: Some(Box::new(self.mult()?)),
-            }
-        }
+        self.binary_op(Self::mult, |t| match t {
+            Tokens::PLUS => Some(Operation::ADD),
+            Tokens::MINUS => Some(Operation::SUBTRACT),
+            _ => None,
+        })
     }
 
     fn bitwise_shift(&mut self) -> Result<AST> {
-        let mut left = self.add()?;
+        self.binary_op(Self::add, |t| match t {
+            Tokens::LSHIFT => Some(Operation::LSHIFT),
+            Tokens::RSHIFT => Some(Operation::RSHIFT),
+            _ => None,
+        })
+    }
+
+    fn bitwise_and(&mut self) -> Result<AST> {
+        self.binary_op(Self::bitwise_shift, |t| {
+            if t == &Tokens::AMPER {
+                Some(Operation::BITAND)
+            } else {
+                None
+            }
+        })
+    }
+
+    fn bitwise_xor(&mut self) -> Result<AST> {
+        self.binary_op(Self::bitwise_and, |t| {
+            if t == &Tokens::BITXOR {
+                Some(Operation::BITXOR)
+            } else {
+                None
+            }
+        })
+    }
+
+    fn bitwise_or(&mut self) -> Result<AST> {
+        self.binary_op(Self::bitwise_xor, |t| {
+            if t == &Tokens::BITOR {
+                Some(Operation::BITOR)
+            } else {
+                None
+            }
+        })
+    }
+
+    // matcher uses the Fn trait to account for closures, used to match tokens to operations
+    // next_level takes a method from Self, which is used to parse operators of higher precedence
+    fn binary_op<F, S>(&mut self, next_level: S, matcher: F) -> Result<AST>
+    where
+        F: Fn(&Tokens) -> Option<Operation>,
+        for<'a> S: Fn(&'a mut Self) -> Result<AST>,
+    {
+        let mut left = next_level(self)?;
 
         loop {
             left = AST {
                 op: {
-                    let v = match *self.lexer.peek()? {
-                        Tokens::LSHIFT => Operation::LSHIFT,
-                        Tokens::RSHIFT => Operation::RSHIFT,
-                        _ => {
-                            break Result::Ok(left);
-                        }
+                    let v = match matcher(self.lexer.peek()?) {
+                        Some(v) => v,
+                        None => break Result::Ok(left),
                     };
                     self.lexer.consume();
                     v
                 },
                 left: Some(Box::new(left)),
-                right: Some(Box::new(self.add()?)),
-            }
-        }
-    }
-
-    fn bitwise_and(&mut self) -> Result<AST> {
-        let mut left = self.bitwise_shift()?;
-
-        loop {
-            left = AST {
-                op: if self.lexer.peek()? == &Tokens::AMPER {
-                    self.lexer.consume();
-                    Operation::BITAND
-                } else {
-                    break Result::Ok(left);
-                },
-                left: Some(Box::new(left)),
-                right: Some(Box::new(self.bitwise_shift()?)),
-            }
-        }
-    }
-
-    fn bitwise_xor(&mut self) -> Result<AST> {
-        let mut left = self.bitwise_and()?;
-
-        loop {
-            left = AST {
-                op: if self.lexer.peek()? == &Tokens::BITXOR {
-                    self.lexer.consume();
-                    Operation::BITXOR
-                } else {
-                    break Result::Ok(left);
-                },
-                left: Some(Box::new(left)),
-                right: Some(Box::new(self.bitwise_and()?)),
-            }
-        }
-    }
-
-    fn bitwise_or(&mut self) -> Result<AST> {
-        let mut left = self.bitwise_xor()?;
-
-        loop {
-            left = AST {
-                op: if self.lexer.peek()? == &Tokens::BITOR {
-                    self.lexer.consume();
-                    Operation::BITOR
-                } else {
-                    break Result::Ok(left);
-                },
-                left: Some(Box::new(left)),
-                right: Some(Box::new(self.bitwise_xor()?)),
+                right: Some(Box::new(next_level(self)?)),
             }
         }
     }
