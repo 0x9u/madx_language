@@ -1,5 +1,6 @@
 use std::{io::Read, result};
 
+use ordered_float::OrderedFloat;
 use thiserror::Error;
 
 use crate::lexer::{Lexer, LexerError, Tokens};
@@ -28,6 +29,7 @@ impl From<LexerError> for ParserError {
 pub enum Operation {
     // todo: define left and right AST enum operations
     NUMBER(i32),
+    FLOAT(OrderedFloat<f32>),
     IDENT(String),
 
     BITNOT,
@@ -87,6 +89,7 @@ impl<R: Read> Parser<R> {
                 op: {
                     let v = match t {
                         Tokens::NUMBER(v) => Operation::NUMBER(*v),
+                        Tokens::FLOAT(v) => Operation::FLOAT(*v), 
                         Tokens::IDENT(v) => Operation::IDENT(v.clone()),
                         _ => return Result::Err(ParserError::SyntaxError),
                     };

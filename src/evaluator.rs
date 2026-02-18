@@ -1,8 +1,12 @@
 use std::collections::HashMap;
 
+use ordered_float::OrderedFloat;
+
 use crate::parser::{AST, Operation};
 
-pub fn evaluate(ast: AST, vars: &mut HashMap<String, i32>) -> i32 {
+type X = OrderedFloat<f32>;
+
+pub fn evaluate(ast: AST, vars: &mut HashMap<String, X>) -> X {
     match ast.op {
         Operation::ADD => evaluate(*ast.left.unwrap(), vars) + evaluate(*ast.right.unwrap(), vars),
         Operation::SUBTRACT => {
@@ -28,27 +32,28 @@ pub fn evaluate(ast: AST, vars: &mut HashMap<String, i32>) -> i32 {
             }
         }
         Operation::LSHIFT => {
-            evaluate(*ast.left.unwrap(), vars) << evaluate(*ast.right.unwrap(), vars)
+            OrderedFloat(((evaluate(*ast.left.unwrap(), vars).0 as i32) << evaluate(*ast.right.unwrap(), vars).0 as i32) as f32)
         },
         Operation::RSHIFT => {
-            evaluate(*ast.left.unwrap(), vars) >> evaluate(*ast.right.unwrap(), vars)
+            OrderedFloat((evaluate(*ast.left.unwrap(), vars).0 as i32 >> evaluate(*ast.right.unwrap(), vars).0 as i32) as f32)
         },
         Operation::BITAND => {
-            evaluate(*ast.left.unwrap(), vars) & evaluate(*ast.right.unwrap(), vars)
+            OrderedFloat((evaluate(*ast.left.unwrap(), vars).0 as i32 & evaluate(*ast.right.unwrap(), vars).0 as i32) as f32)
         },
         Operation::BITXOR => {
-            evaluate(*ast.left.unwrap(), vars) ^ evaluate(*ast.right.unwrap(), vars)
+            OrderedFloat((evaluate(*ast.left.unwrap(), vars).0 as i32 ^ evaluate(*ast.right.unwrap(), vars).0 as i32) as f32)
         },
         Operation::BITOR => {
-            evaluate(*ast.left.unwrap(), vars) | evaluate(*ast.right.unwrap(), vars)
+            OrderedFloat((evaluate(*ast.left.unwrap(), vars).0 as i32 | evaluate(*ast.right.unwrap(), vars).0 as i32) as f32)
         },
         Operation::NEGATE => {
             -evaluate(*ast.left.unwrap(), vars)
         },
         Operation::BITNOT => {
-            !evaluate(*ast.left.unwrap(), vars)
+            OrderedFloat(!(evaluate(*ast.left.unwrap(), vars).0 as i32) as f32) 
         },
-        Operation::NUMBER(v) => v,
+        Operation::NUMBER(v) => OrderedFloat(v as f32),
+        Operation::FLOAT(v) => v,
         Operation::IDENT(v) => {
             if let Some(v) = vars.get(&v) {
                 *v

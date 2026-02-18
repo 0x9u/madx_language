@@ -2,8 +2,12 @@
 
 use thiserror::Error;
 
+use ordered_float::OrderedFloat;
 use std::{
-    collections::VecDeque, fmt::{self, Display}, io::{self, BufReader, Read}, result
+    collections::VecDeque,
+    fmt::{self, Display},
+    io::{self, BufReader, Read},
+    result,
 };
 use utf8_chars::BufReadCharsExt;
 
@@ -26,6 +30,9 @@ pub enum LexerError {
 
     #[error("Lexer Error: Integer Overflow")]
     IntegerOverflow,
+
+    #[error("Lexer Error: Malformed Float")]
+    MalformedFloat,
 
     #[error("Lexer Error: IO Error: {0}")]
     Io(LexerIoError),
@@ -105,6 +112,7 @@ pub enum Tokens {
     STRING(String),
 
     NUMBER(i32),
+    FLOAT(OrderedFloat<f32>),
     IDENT(String),
 
     FN,
@@ -129,7 +137,7 @@ pub enum Tokens {
 pub struct Lexer<R: Read> {
     input_buf: BufReader<R>,
     char_putback_buf: VecDeque<char>,
-    token_putback_buf: Option<Tokens>
+    token_putback_buf: Option<Tokens>,
 }
 
 impl<R: Read> Lexer<R> {
@@ -137,7 +145,7 @@ impl<R: Read> Lexer<R> {
         Ok(Self {
             input_buf: BufReader::new(input),
             char_putback_buf: VecDeque::new(),
-            token_putback_buf : None,
+            token_putback_buf: None,
         })
     }
 
@@ -154,13 +162,15 @@ impl<R: Read> Lexer<R> {
     fn putback(&mut self, c: char) {
         self.char_putback_buf.push_back(c);
     }
-    
+
     pub fn peek(&mut self) -> Result<&Tokens> {
         if self.token_putback_buf.is_none() {
             self.token_putback_buf = Some(self.scan_token()?);
         }
 
-       self.token_putback_buf.as_ref().ok_or_else(|| unreachable!())
+        self.token_putback_buf
+            .as_ref()
+            .ok_or_else(|| unreachable!())
     }
 
     pub fn consume(&mut self) {
@@ -170,9 +180,7 @@ impl<R: Read> Lexer<R> {
     pub fn take(&mut self) -> Result<Tokens> {
         match self.token_putback_buf.take() {
             Some(t) => Ok(t),
-            None => {
-                self.scan_token()
-            }
+            None => self.scan_token(),
         }
     }
 
@@ -288,7 +296,18 @@ impl<R: Read> Lexer<R> {
                 ']' => return Result::Ok(Tokens::RBRACKET),
                 '{' => return Result::Ok(Tokens::LBRACE),
                 '}' => return Result::Ok(Tokens::RBRACE),
-                '.' => return Result::Ok(Tokens::DOT),
+                '.' => {
+                    if let Some(c) = self.read()? {
+                        if c.is_digit(10) {
+                            return self.scan_float();
+                        } else {
+                            self.putback(c);
+                            return Result::Ok(Tokens::DOT);
+                        }
+                    } else {
+                        return Result::Ok(Tokens::DOT);
+                    }
+                }
                 ':' => return Result::Ok(Tokens::COLON),
                 ';' => return Result::Ok(Tokens::SEMICOLON),
                 '\'' => {
@@ -302,8 +321,7 @@ impl<R: Read> Lexer<R> {
                 _ => {
                     if c.is_numeric() {
                         self.putback(c); // to be consumed by scan_number
-                        let num = self.scan_number()?;
-                        return Result::Ok(Tokens::NUMBER(num));
+                        return self.scan_number();
                     } else {
                         self.putback(c); // to be consumed by keyword
                         return self.match_keyword();
@@ -316,24 +334,27 @@ impl<R: Read> Lexer<R> {
     }
 
     // NEGATIVE NUMBERS TO BE HANDLED BY PARSER
-    fn scan_number(&mut self) -> Result<i32> {
+    fn scan_number(&mut self) -> Result<Tokens> {
         // safe to unwrap twice since we know we putback
         let c = self.read().unwrap().unwrap();
+
         if c == '0' {
             if let Some(c) = self.read()? {
+                // todo: avoid redundant wrapping
+
                 if c == 'x' {
-                    self.scan_base(16)
+                    Result::Ok(Tokens::NUMBER(self.scan_base(16)?))
                 } else {
                     self.putback(c);
-                    self.scan_base(8)
+                    Result::Ok(Tokens::NUMBER(self.scan_base(8)?))
                 }
             } else {
                 self.putback(c);
-                self.scan_base(10)
+                self.scan_float()
             }
         } else {
             self.putback(c);
-            self.scan_base(10)
+            self.scan_float()
         }
     }
 
@@ -353,6 +374,72 @@ impl<R: Read> Lexer<R> {
         }
 
         Ok(num)
+    }
+
+    fn scan_float(&mut self) -> Result<Tokens> {
+        let front = self.scan_base(10)? as f32;
+
+        if let Some(c) = self.read()? {
+            if c == '.' {
+                let mut mantissa = 0_f32;
+                let mut position = 1_f32;
+                while let Some(c) = self.read()? {
+                    if let Some(d) = c.to_digit(10) {
+                        position /= 10.0;
+                        mantissa += d as f32 * position;
+                    } else {
+                        self.putback(c);
+                        break;
+                    }
+                }
+                let float = mantissa + front;
+                Result::Ok(Tokens::FLOAT(OrderedFloat(self.read_exponent(float)?)))
+            } else {
+                self.putback(c);
+                Result::Ok(Tokens::NUMBER(self.read_exponent(front)? as i32))
+            }
+        } else {
+            Result::Ok(Tokens::NUMBER(front as i32))
+        }
+    }
+
+    fn read_exponent(&mut self, num: f32) -> Result<f32> {
+        if let Some(c) = self.read()? {
+            if c == 'e' || c == 'E' {
+                let is_frac = {
+                    if let Some(c) = self.read()? {
+                        if c == '-' {
+                            Result::Ok(true)
+                        } else if c != '+' {
+                            // + is the most useless aaah character
+                            self.putback(c);
+                            Result::Ok(false)
+                        } else {
+                            // still need to consume that +
+                            Result::Ok(false)
+                        }
+                    } else {
+                        // EOF reached on ended E
+                        Result::Err(LexerError::MalformedFloat)
+                    }
+                }?;
+
+                let exp = self.scan_base(10)?;
+
+                let mult = 10_f32;
+                Result::Ok(
+                    num * mult.powf(
+                        exp as f32
+                            * if is_frac { -1_f32 } else { 1_f32 },
+                    ),
+                )
+            } else {
+                self.putback(c);
+                Result::Ok(num)
+            }
+        } else {
+            Result::Ok(num)
+        }
     }
 
     fn match_keyword(&mut self) -> Result<Tokens> {
@@ -421,7 +508,7 @@ impl<R: Read> Lexer<R> {
 
     fn scan_char(&mut self) -> Result<char> {
         // ? NOTE: I didn't putback on error since string doesn't do that as well
-        
+
         if let Some(c) = self.read()? {
             if let Some(c2) = self.read()? {
                 if c2 == '\'' {
