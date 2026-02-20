@@ -138,6 +138,9 @@ pub struct Lexer<R: Read> {
     input_buf: BufReader<R>,
     char_putback_buf: VecDeque<char>,
     token_putback_buf: Option<Tokens>,
+
+    line_position: usize,
+    column_position: usize,
 }
 
 impl<R: Read> Lexer<R> {
@@ -146,6 +149,8 @@ impl<R: Read> Lexer<R> {
             input_buf: BufReader::new(input),
             char_putback_buf: VecDeque::new(),
             token_putback_buf: None,
+            line_position: 1,
+            column_position: 1
         })
     }
 
@@ -396,7 +401,7 @@ impl<R: Read> Lexer<R> {
                 Result::Ok(Tokens::FLOAT(OrderedFloat(self.read_exponent(float)?)))
             } else {
                 self.putback(c);
-                Result::Ok(Tokens::NUMBER(self.read_exponent(front)? as i32))
+                Result::Ok(Tokens::FLOAT(OrderedFloat(self.read_exponent(front)?)))
             }
         } else {
             Result::Ok(Tokens::NUMBER(front as i32))
