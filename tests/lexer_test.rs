@@ -9,7 +9,7 @@ mod tests {
 
         let mut lexer = Lexer::new(input.as_bytes())?;
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(123456789));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("123456789".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::EOF);
 
@@ -23,27 +23,27 @@ mod tests {
 
         let mut lexer = Lexer::new(input.as_bytes())?;
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(1));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("1".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::PLUS);
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(1));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("1".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::ASTERISK);
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(2));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("2".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::DIVIDE);
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(4));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("4".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::MINUS);
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(9));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("9".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::MODULO);
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(5));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("5".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::EOF);
 
@@ -56,39 +56,39 @@ mod tests {
 
         let mut lexer = Lexer::new(input.as_bytes())?;
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(1));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("1".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::LOGAND);
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(2));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("2".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::LOGOR);
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(2));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("2".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::LTE);
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(6));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("6".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::LT);
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(7));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("7".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::GTE);
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(3));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("3".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::GT);
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(4));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("4".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::EQ);
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(8));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("8".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::NEQ);
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(9));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("9".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::EOF);
 
@@ -101,19 +101,19 @@ mod tests {
 
         let mut lexer = Lexer::new(input.as_bytes())?;
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(1));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("1".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::AMPER);
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(2));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("2".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::BITOR);
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(3));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("3".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::BITXOR);
 
-        assert_eq!(lexer.take()?, Tokens::NUMBER(4));
+        assert_eq!(lexer.take()?, Tokens::NUMBER("4".to_string()));
 
         assert_eq!(lexer.take()?, Tokens::EOF);
 
@@ -212,7 +212,7 @@ mod tests {
     }
 
     #[test]
-    fn error_on_unterminated_string() -> Result<(), LexerError> {
+    fn error_on_unterminated_string_eof() -> Result<(), LexerError> {
         let input = "\"string";
 
         let mut lexer = Lexer::new(input.as_bytes())?;
@@ -221,6 +221,17 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn error_on_unterminated_string_newline() -> Result<(), LexerError> {
+        let input = "\"test\n\"";
+
+        let mut lexer = Lexer::new(input.as_bytes())?;
+
+        assert_eq!(lexer.take(), Result::Err(LexerError::UnterminatedString));
+
+        Ok(())
+    } 
 
     #[test]
     fn error_on_unterminated_char() -> Result<(), LexerError> {
@@ -254,17 +265,4 @@ mod tests {
 
         Ok(())
     }
-
-    #[test]
-    fn error_on_integer_overflow() -> Result<(), LexerError> {
-        let input = "2147483648";
-
-        let mut lexer = Lexer::new(input.as_bytes())?;
-
-        assert_eq!(lexer.take(), Result::Err(LexerError::IntegerOverflow));
-
-        Ok(())
-    }
-
-
 }

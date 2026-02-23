@@ -2,7 +2,6 @@
 
 use thiserror::Error;
 
-use ordered_float::OrderedFloat;
 use std::{
     collections::VecDeque,
     fmt::{self, Display},
@@ -27,9 +26,6 @@ pub enum LexerError {
 
     #[error("Lexer Error: > 1 Character in Character Constant")]
     CharacterConstantTooLong,
-
-    #[error("Lexer Error: Integer Overflow")]
-    IntegerOverflow,
 
     #[error("Lexer Error: Malformed Float")]
     MalformedFloat,
@@ -111,8 +107,8 @@ pub enum Tokens {
     CHAR(char),
     STRING(String),
 
-    NUMBER(i32),
-    FLOAT(OrderedFloat<f32>),
+    NUMBER(String),
+    FLOAT(String),
     IDENT(String),
 
     FN,
@@ -348,10 +344,10 @@ impl<R: Read> Lexer<R> {
                 // todo: avoid redundant wrapping
 
                 if c == 'x' {
-                    Result::Ok(Tokens::NUMBER(self.scan_base(16)?))
+                    Result::Ok(Tokens::NUMBER("0x".to_string() + &self.scan_base(16)?))
                 } else {
                     self.putback(c);
-                    Result::Ok(Tokens::NUMBER(self.scan_base(8)?))
+                    Result::Ok(Tokens::NUMBER("0".to_string() + &self.scan_base(8)?))
                 }
             } else {
                 self.putback(c);
@@ -363,15 +359,12 @@ impl<R: Read> Lexer<R> {
         }
     }
 
-    fn scan_base(&mut self, base: u32) -> Result<i32> {
-        let mut num = 0_i32;
+    fn scan_base(&mut self, base: u32) -> Result<String> {
+        let mut num = String::new();
         while let Some(c) = self.read()? {
-            if let Some(d) = c.to_digit(base) {
-                num *= base as i32;
-                num = match num.checked_add(d as i32) {
-                    Some(n) => n,
-                    None => return Result::Err(LexerError::IntegerOverflow),
-                }
+            if c.is_digit(base) {
+                // parsers responsibility to throw int overflow error
+                num.push(c);
             } else {
                 self.putback(c);
                 break;
@@ -382,68 +375,68 @@ impl<R: Read> Lexer<R> {
     }
 
     fn scan_float(&mut self) -> Result<Tokens> {
-        let front = self.scan_base(10)? as f32;
+        let mut num = self.scan_base(10)?;
 
         if let Some(c) = self.read()? {
             if c == '.' {
-                let mut mantissa = 0_f32;
-                let mut position = 1_f32;
+                num.push('.');
+
                 while let Some(c) = self.read()? {
-                    if let Some(d) = c.to_digit(10) {
-                        position /= 10.0;
-                        mantissa += d as f32 * position;
+                    if c.is_digit(10) {
+                        num.push(c);
                     } else {
                         self.putback(c);
                         break;
                     }
                 }
-                let float = mantissa + front;
-                Result::Ok(Tokens::FLOAT(OrderedFloat(self.read_exponent(float)?)))
+                
+                self.read_exponent(&mut num)?;
+
+                Result::Ok(Tokens::FLOAT(num))
             } else {
                 self.putback(c);
-                Result::Ok(Tokens::FLOAT(OrderedFloat(self.read_exponent(front)?)))
+                let is_float = self.read_exponent(&mut num)?;
+                
+                Result::Ok(
+                if is_float {
+                    Tokens::FLOAT(num)
+                } else {
+                    Tokens::NUMBER(num)
+                })
             }
         } else {
-            Result::Ok(Tokens::NUMBER(front as i32))
+            Result::Ok(Tokens::NUMBER(num))
         }
     }
 
-    fn read_exponent(&mut self, num: f32) -> Result<f32> {
+    fn read_exponent(&mut self, num: &mut String) -> Result<bool> {
         if let Some(c) = self.read()? {
             if c == 'e' || c == 'E' {
-                let is_frac = {
-                    if let Some(c) = self.read()? {
-                        if c == '-' {
-                            Result::Ok(true)
-                        } else if c != '+' {
-                            // + is the most useless aaah character
-                            self.putback(c);
-                            Result::Ok(false)
-                        } else {
-                            // still need to consume that +
-                            Result::Ok(false)
-                        }
+                num.push(c);
+                if let Some(c) = self.read()? {
+                    if c == '-' || c == '+' {
+                        num.push(c);
+                    } else if c.is_digit(10) {
+                        self.putback(c);
                     } else {
-                        // EOF reached on ended E
-                        Result::Err(LexerError::MalformedFloat)
+                        // ended on E
+                        return Result::Err(LexerError::MalformedFloat);
                     }
-                }?;
+                } else {
+                    // EOF reached on ended E
+                    return Result::Err(LexerError::MalformedFloat);
+                }
 
-                let exp = self.scan_base(10)?;
-
-                let mult = 10_f32;
+                num.push_str( &self.scan_base(10)?);
                 Result::Ok(
-                    num * mult.powf(
-                        exp as f32
-                            * if is_frac { -1_f32 } else { 1_f32 },
-                    ),
+                    true
                 )
             } else {
                 self.putback(c);
-                Result::Ok(num)
+                Result::Ok(false)
             }
         } else {
-            Result::Ok(num)
+            Result::Ok(false)
         }
     }
 
@@ -487,6 +480,10 @@ impl<R: Read> Lexer<R> {
         while let Some(c) = self.read()? {
             if c == '\"' {
                 return Result::Ok(str);
+            }
+
+            if c == '\n' {
+                return Result::Err(LexerError::UnterminatedString);
             }
 
             if c == '\\' {

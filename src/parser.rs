@@ -1,4 +1,4 @@
-use std::{io::Read, result};
+use std::{io::Read, num::{ParseFloatError, ParseIntError}, result};
 
 use ordered_float::OrderedFloat;
 use thiserror::Error;
@@ -15,6 +15,12 @@ pub enum ParserError {
     #[error("Parser Error: syntax error")]
     SyntaxError,
 
+    #[error("Parser Error: Could not convert to int: {0}")]
+    ParseIntError(ParseIntError),
+
+    #[error("Parser Error: Could not convert to float: {0}")]
+    ParseFloatError(ParseFloatError),
+
     #[error("{0}")]
     Lexer(LexerError),
 }
@@ -22,6 +28,18 @@ pub enum ParserError {
 impl From<LexerError> for ParserError {
     fn from(e: LexerError) -> Self {
         ParserError::Lexer(e)
+    }
+}
+
+impl From<ParseIntError> for ParserError {
+    fn from(e: ParseIntError) -> Self {
+        ParserError::ParseIntError(e)
+    }
+}
+
+impl From<ParseFloatError> for ParserError {
+    fn from(e: ParseFloatError) -> Self {
+        ParserError::ParseFloatError(e)
     }
 }
 
@@ -88,8 +106,17 @@ impl<R: Read> Parser<R> {
             Result::Ok(AST {
                 op: {
                     let v = match t {
-                        Tokens::NUMBER(v) => Operation::NUMBER(*v),
-                        Tokens::FLOAT(v) => Operation::FLOAT(*v), 
+                        Tokens::NUMBER(v) => Operation::NUMBER(if v.starts_with("0x") {
+                            i32::from_str_radix(v.trim_start_matches("0x"), 16)?
+                        } else if v.starts_with("0") {
+                            let mut trim = v.chars();
+                            trim.next();
+                            i32::from_str_radix(trim.as_str(), 8)?
+                        } else {
+                            i32::from_str_radix(v, 10)?
+                        }),
+                        Tokens::FLOAT(v) => 
+                            Operation::FLOAT(OrderedFloat(v.parse()?)),
                         Tokens::IDENT(v) => Operation::IDENT(v.clone()),
                         _ => return Result::Err(ParserError::SyntaxError),
                     };
