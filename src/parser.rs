@@ -70,6 +70,7 @@ pub enum Operation {
     GLUE, // to join statements together
 }
 
+#[derive(Debug, PartialEq)]
 pub struct AST {
     pub op: Operation,
     pub left: Option<Box<AST>>,
@@ -238,7 +239,6 @@ impl<R: Read> Parser<R> {
     fn assign(&mut self) -> Result<AST> {
         let left = self.bitwise_or()?;
 
-        // todo: figure out recursion
         if *self.lexer.peek()? == Tokens::ASSIGN {
             self.lexer.consume();
             Result::Ok(AST {
