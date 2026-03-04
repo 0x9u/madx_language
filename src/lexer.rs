@@ -79,7 +79,7 @@ pub enum Tokens {
 
     BITOR,
     BITXOR,
-    AMPER, // called amper cause address of uses this symbol as well as bitwise AND
+    AMPER, // Used for addresses and AND
 
     EQ,
     NEQ,
@@ -93,10 +93,10 @@ pub enum Tokens {
     LSHIFT,
     RSHIFT,
 
-    MINUS, // also unary
+    MINUS, // Also unary
     PLUS,
 
-    ASTERISK, // called asterik cause pointer uses this symbol as well as times
+    ASTERISK, // Used for pointers and multiplication
     DIVIDE,
 
     MODULO,
@@ -114,7 +114,7 @@ pub enum Tokens {
 
     ARROW,
 
-    COLON, // used for labels
+    COLON, // Used for labels
     SEMICOLON,
 
     LBRACE,
@@ -125,6 +125,7 @@ pub enum Tokens {
 
     NUMBER(String),
     FLOAT(String),
+
     IDENT(String),
 
     FN,
@@ -138,7 +139,7 @@ pub enum Tokens {
     STRUCT,
     UNION,
 
-    U0, // equivalent to void
+    U0, // Equivalent to void
     I8,
     I16,
     I32,
