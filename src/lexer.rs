@@ -1,16 +1,25 @@
 #![allow(dead_code)] // for now until the rest is made
 
+use peekread::BufPeekReader;
 use thiserror::Error;
-
-use std::{
-    collections::VecDeque,
-    fmt::{self, Display},
-    io::{self, BufReader, Read},
-    result,
-};
 use utf8_chars::BufReadCharsExt;
 
+use std::{
+    fmt::{self, Display},
+    io::{self, Read},
+    result,
+};
+
+use peekread::PeekRead;
+use std::io::Seek;
+
 pub type Result<T> = result::Result<T, LexerError>;
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub struct SourcePosition {
+    pub line_position: usize,
+    pub column_position: usize,
+}
 
 // since io::Error is not PartialEq
 #[derive(Debug)]
@@ -19,16 +28,22 @@ pub struct LexerIoError(pub io::Error);
 #[derive(Debug, Error, PartialEq)]
 pub enum LexerError {
     #[error("Lexer Error: Unterminated String")]
-    UnterminatedString,
+    UnterminatedString(SourcePosition),
 
     #[error("Lexer Error: Unterminated Character Constant")]
-    UnterminatedCharacterConstant,
+    UnterminatedCharacterConstant(SourcePosition),
 
     #[error("Lexer Error: > 1 Character in Character Constant")]
-    CharacterConstantTooLong,
+    CharacterConstantTooLong(SourcePosition),
 
     #[error("Lexer Error: Malformed Float")]
-    MalformedFloat,
+    MalformedFloat(SourcePosition),
+
+    #[error("Lexer Error: Unterminated Comment")]
+    UnterminatedComment(SourcePosition),
+
+    #[error("Lexer Error: Unrecognised Character")]
+    UnrecognisedCharacter(SourcePosition),
 
     #[error("Lexer Error: IO Error: {0}")]
     Io(LexerIoError),
@@ -55,6 +70,7 @@ impl From<io::Error> for LexerError {
 // todo: implement Display for Tokens
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Tokens {
+    // TODO: Error token
     ASSIGN,
 
     LOGAND,
@@ -131,40 +147,51 @@ pub enum Tokens {
 
 // todo: keep track of lines
 pub struct Lexer<R: Read> {
-    input_buf: BufReader<R>,
-    char_putback_buf: VecDeque<char>,
+    input_buf: BufPeekReader<R>,
     token_putback_buf: Option<Tokens>,
-
-    line_position: usize,
-    column_position: usize,
+    source_position: SourcePosition,
+    record_position: bool,
 }
 
 impl<R: Read> Lexer<R> {
     pub fn new(input: R) -> Result<Self> {
         Ok(Self {
-            input_buf: BufReader::new(input),
-            char_putback_buf: VecDeque::new(),
+            input_buf: BufPeekReader::new(input),
             token_putback_buf: None,
-            line_position: 1,
-            column_position: 1
+            source_position: SourcePosition {
+                line_position: 1,
+                column_position: 0,
+            },
+            record_position: true,
         })
     }
 
-    fn read(&mut self) -> Result<Option<char>> {
-        if let Some(c) = self.char_putback_buf.pop_front() {
-            Result::Ok(Some(c))
-        } else if let Some(c) = self.input_buf.read_char()? {
-            Result::Ok(Some(c))
+    fn peek(&mut self, n: u64) -> Result<Option<char>> {
+        let mut c = self.input_buf.peek();
+        c.seek(io::SeekFrom::Start(n))?;
+        Ok(c.read_char()?)
+    }
+
+    fn consume(&mut self) -> Result<Option<char>> {
+        if let Some(c) = self.input_buf.read_char()? {
+            if self.record_position {
+                if c == '\n' {
+                    self.source_position.line_position += 1;
+                    self.source_position.column_position = 1;
+                } else if c == '\t' {
+                    self.source_position.column_position +=
+                        8 - (self.source_position.column_position % 8)
+                } else {
+                    self.source_position.column_position += 1;
+                }
+            }
+            Ok(Some(c))
         } else {
-            Result::Ok(None)
+            Ok(None)
         }
     }
 
-    fn putback(&mut self, c: char) {
-        self.char_putback_buf.push_back(c);
-    }
-
-    pub fn peek(&mut self) -> Result<&Tokens> {
+    pub fn peek_token(&mut self) -> Result<&Tokens> {
         if self.token_putback_buf.is_none() {
             self.token_putback_buf = Some(self.scan_token()?);
         }
@@ -174,7 +201,7 @@ impl<R: Read> Lexer<R> {
             .ok_or_else(|| unreachable!())
     }
 
-    pub fn consume(&mut self) {
+    pub fn consume_token(&mut self) {
         self.token_putback_buf = None
     }
 
@@ -185,188 +212,300 @@ impl<R: Read> Lexer<R> {
         }
     }
 
-    fn scan_token(&mut self) -> Result<Tokens> {
-        while let Some(c) = self.read()? {
-            // TODO: skip comments (// and /* */)
-            if c.is_whitespace() {
-                continue;
+    fn skip_whitespace_and_comments(&mut self) -> Result<()> {
+        while let Some(c) = self.peek(0)? {
+            if c == '/' {
+                let c2 = match self.peek(1)? {
+                    Some(c) => c,
+                    None => {
+                        break;
+                    }
+                };
+
+                if c2 == '*' {
+                    self.consume()?;
+                    self.consume()?;
+
+                    loop {
+                        let c = match self.peek(0)? {
+                            Some(c) => c,
+                            None => return Err(LexerError::UnterminatedComment(self.source_position.clone())),
+                        };
+
+                        if c == '*' {
+                            let c2 = match self.peek(1)? {
+                                Some(c) => c,
+                                None => return Err(LexerError::UnterminatedComment(self.source_position.clone())),
+                            };
+
+                            if c2 == '/' {
+                                // other character will be consumed out of loop
+                                self.consume()?;
+                                break;
+                            }
+                        }
+
+                        self.consume()?;
+                    }
+                } else if c2 == '/' {
+                    self.consume()?;
+                    self.consume()?;
+
+                    loop {
+                        let c = match self.peek(0)? {
+                            Some(c) => c,
+                            None => return Ok(()),
+                        };
+
+                        if c == '\n' {
+                            break;
+                        }
+
+                        self.consume()?;
+                    }
+                } else {
+                    break;
+                }
+            } else if !c.is_whitespace() {
+                break;
             }
 
+            self.consume()?;
+        }
+
+        Ok(())
+    }
+
+    fn scan_token(&mut self) -> Result<Tokens> {
+        self.record_position = false;
+        self.skip_whitespace_and_comments()?;
+        self.record_position = true;
+
+        Ok(if let Some(c) = self.peek(0)? {
             match c {
                 '&' => {
-                    if let Some(c) = self.read()? {
+                    self.consume()?;
+                    if let Some(c) = self.peek(0)? {
                         if c == '&' {
-                            return Result::Ok(Tokens::LOGAND);
+                            self.consume()?;
+                            Tokens::LOGAND
                         } else {
-                            self.putback(c);
-                            return Result::Ok(Tokens::AMPER);
+                            Tokens::AMPER
                         }
                     } else {
-                        return Result::Ok(Tokens::AMPER);
+                        Tokens::AMPER
                     }
                 }
                 '|' => {
-                    if let Some(c) = self.read()? {
+                    self.consume()?;
+                    if let Some(c) = self.peek(0)? {
                         if c == '|' {
-                            return Result::Ok(Tokens::LOGOR);
+                            self.consume()?;
+                            Tokens::LOGOR
                         } else {
-                            self.putback(c);
-                            return Result::Ok(Tokens::BITOR);
+                            Tokens::BITOR
                         }
                     } else {
-                        return Result::Ok(Tokens::BITOR);
+                        Tokens::BITOR
                     }
                 }
                 '=' => {
-                    if let Some(c) = self.read()? {
+                    self.consume()?;
+                    if let Some(c) = self.peek(0)? {
                         if c == '=' {
-                            return Result::Ok(Tokens::EQ);
+                            self.consume()?;
+                            Tokens::EQ
                         } else {
-                            self.putback(c);
-                            return Result::Ok(Tokens::ASSIGN);
+                            Tokens::ASSIGN
                         }
                     } else {
-                        return Result::Ok(Tokens::ASSIGN);
+                        Tokens::ASSIGN
                     }
                 }
 
                 '!' => {
-                    if let Some(c) = self.read()? {
+                    self.consume()?;
+                    if let Some(c) = self.peek(0)? {
                         if c == '=' {
-                            return Result::Ok(Tokens::NEQ);
+                            self.consume()?;
+                            Tokens::NEQ
                         } else {
-                            self.putback(c);
-                            return Result::Ok(Tokens::NOT);
+                            Tokens::NOT
                         }
                     } else {
-                        return Result::Ok(Tokens::NOT);
+                        Tokens::NOT
                     }
                 }
 
                 '<' => {
-                    if let Some(c) = self.read()? {
+                    self.consume()?;
+                    if let Some(c) = self.peek(0)? {
                         if c == '=' {
-                            return Result::Ok(Tokens::LTE);
+                            self.consume()?;
+                            Tokens::LTE
                         } else if c == '<' {
-                            return Result::Ok(Tokens::LSHIFT);
+                            self.consume()?;
+                            Tokens::LSHIFT
                         } else {
-                            self.putback(c);
-                            return Result::Ok(Tokens::LT);
+                            Tokens::LT
                         }
                     } else {
-                        return Result::Ok(Tokens::LT);
+                        Tokens::LT
                     }
                 }
 
                 '>' => {
-                    if let Some(c) = self.read()? {
+                    self.consume()?;
+                    if let Some(c) = self.peek(0)? {
                         if c == '=' {
-                            return Result::Ok(Tokens::GTE);
+                            self.consume()?;
+                            Tokens::GTE
                         } else if c == '>' {
-                            return Result::Ok(Tokens::RSHIFT);
+                            self.consume()?;
+                            Tokens::RSHIFT
                         } else {
-                            self.putback(c);
-                            return Result::Ok(Tokens::GT);
+                            Tokens::GT
                         }
                     } else {
-                        return Result::Ok(Tokens::GT);
+                        Tokens::GT
                     }
                 }
 
-                '^' => return Result::Ok(Tokens::BITXOR),
+                '^' => {
+                    self.consume()?;
+                    Tokens::BITXOR
+                }
                 '-' => {
-                    if let Some(c) = self.read()? {
+                    self.consume()?;
+                    if let Some(c) = self.peek(0)? {
                         if c == '>' {
-                            return Result::Ok(Tokens::ARROW);
+                            self.consume()?;
+                            Tokens::ARROW
                         } else {
-                            self.putback(c);
-                            return Result::Ok(Tokens::MINUS);
+                            Tokens::MINUS
                         }
                     } else {
-                        return Result::Ok(Tokens::MINUS);
+                        Tokens::MINUS
                     }
                 }
-                '+' => return Result::Ok(Tokens::PLUS),
-                '*' => return Result::Ok(Tokens::ASTERISK),
-                '/' => return Result::Ok(Tokens::DIVIDE),
-                '%' => return Result::Ok(Tokens::MODULO),
-                '~' => return Result::Ok(Tokens::BITNOT),
-                '(' => return Result::Ok(Tokens::LPARENT),
-                ')' => return Result::Ok(Tokens::RPARENT),
-                '[' => return Result::Ok(Tokens::LBRACKET),
-                ']' => return Result::Ok(Tokens::RBRACKET),
-                '{' => return Result::Ok(Tokens::LBRACE),
-                '}' => return Result::Ok(Tokens::RBRACE),
+                '+' => {
+                    self.consume()?;
+                    Tokens::PLUS
+                }
+                '*' => {
+                    self.consume()?;
+                    Tokens::ASTERISK
+                }
+                '/' => {
+                    self.consume()?;
+                    Tokens::DIVIDE
+                }
+                '%' => {
+                    self.consume()?;
+                    Tokens::MODULO
+                }
+                '~' => {
+                    self.consume()?;
+                    Tokens::BITNOT
+                }
+                '(' => {
+                    self.consume()?;
+                    Tokens::LPARENT
+                }
+                ')' => {
+                    self.consume()?;
+                    Tokens::RPARENT
+                }
+                '[' => {
+                    self.consume()?;
+                    Tokens::LBRACKET
+                }
+                ']' => {
+                    self.consume()?;
+                    Tokens::RBRACKET
+                }
+                '{' => {
+                    self.consume()?;
+                    Tokens::LBRACE
+                }
+                '}' => {
+                    self.consume()?;
+                    Tokens::RBRACE
+                }
                 '.' => {
-                    if let Some(c) = self.read()? {
+                    if let Some(c) = self.peek(0)? {
                         if c.is_digit(10) {
                             return self.scan_float();
                         } else {
-                            self.putback(c);
-                            return Result::Ok(Tokens::DOT);
+                            Tokens::DOT
                         }
                     } else {
-                        return Result::Ok(Tokens::DOT);
+                        Tokens::DOT
                     }
                 }
-                ':' => return Result::Ok(Tokens::COLON),
-                ';' => return Result::Ok(Tokens::SEMICOLON),
+                ':' => {
+                    self.consume()?;
+                    Tokens::COLON
+                }
+                ';' => {
+                    self.consume()?;
+                    Tokens::SEMICOLON
+                }
                 '\'' => {
+                    self.consume()?;
                     let chr = self.scan_char()?;
-                    return Result::Ok(Tokens::CHAR(chr));
+                    Tokens::CHAR(chr)
                 }
                 '"' => {
+                    self.consume()?;
                     let str = self.scan_string()?;
-                    return Result::Ok(Tokens::STRING(str));
+                    Tokens::STRING(str)
                 }
                 _ => {
                     if c.is_numeric() {
-                        self.putback(c); // to be consumed by scan_number
-                        return self.scan_number();
+                        self.scan_number()?
+                    } else if c.is_alphabetic() || c == '_' {
+                        self.match_keyword()?
                     } else {
-                        self.putback(c); // to be consumed by keyword
-                        return self.match_keyword();
+                        return Err(LexerError::UnrecognisedCharacter(self.source_position.clone()));
                     }
                 }
             }
-        }
-
-        Result::Ok(Tokens::EOF)
+        } else {
+            Tokens::EOF
+        })
     }
 
     // NEGATIVE NUMBERS TO BE HANDLED BY PARSER
     fn scan_number(&mut self) -> Result<Tokens> {
-        // safe to unwrap twice since we know we putback
-        let c = self.read().unwrap().unwrap();
+        // safe to unwrap twice since we know its real before
+        let c = self.peek(0).unwrap().unwrap();
 
         if c == '0' {
-            if let Some(c) = self.read()? {
-                // todo: avoid redundant wrapping
-
+            self.consume()?;
+            if let Some(c) = self.peek(0)? {
                 if c == 'x' {
-                    Result::Ok(Tokens::NUMBER("0x".to_string() + &self.scan_base(16)?))
+                    self.consume()?;
+                    Ok(Tokens::NUMBER("0x".to_string() + &self.scan_base(16)?))
                 } else {
-                    self.putback(c);
-                    Result::Ok(Tokens::NUMBER("0".to_string() + &self.scan_base(8)?))
+                    Ok(Tokens::NUMBER("0".to_string() + &self.scan_base(8)?))
                 }
             } else {
-                self.putback(c);
                 self.scan_float()
             }
         } else {
-            self.putback(c);
             self.scan_float()
         }
     }
 
     fn scan_base(&mut self, base: u32) -> Result<String> {
         let mut num = String::new();
-        while let Some(c) = self.read()? {
+        while let Some(c) = self.peek(0)? {
             if c.is_digit(base) {
                 // parsers responsibility to throw int overflow error
+                self.consume()?;
                 num.push(c);
             } else {
-                self.putback(c);
                 break;
             }
         }
@@ -377,66 +516,62 @@ impl<R: Read> Lexer<R> {
     fn scan_float(&mut self) -> Result<Tokens> {
         let mut num = self.scan_base(10)?;
 
-        if let Some(c) = self.read()? {
+        if let Some(c) = self.peek(0)? {
             if c == '.' {
+                self.consume()?;
                 num.push('.');
 
-                while let Some(c) = self.read()? {
+                while let Some(c) = self.peek(0)? {
                     if c.is_digit(10) {
+                        self.consume()?;
                         num.push(c);
                     } else {
-                        self.putback(c);
                         break;
                     }
                 }
-                
+
                 self.read_exponent(&mut num)?;
 
-                Result::Ok(Tokens::FLOAT(num))
+                Ok(Tokens::FLOAT(num))
             } else {
-                self.putback(c);
                 let is_float = self.read_exponent(&mut num)?;
-                
-                Result::Ok(
-                if is_float {
+
+                Ok(if is_float {
                     Tokens::FLOAT(num)
                 } else {
                     Tokens::NUMBER(num)
                 })
             }
         } else {
-            Result::Ok(Tokens::NUMBER(num))
+            Ok(Tokens::NUMBER(num))
         }
     }
 
     fn read_exponent(&mut self, num: &mut String) -> Result<bool> {
-        if let Some(c) = self.read()? {
+        if let Some(c) = self.peek(0)? {
             if c == 'e' || c == 'E' {
+                self.consume()?;
                 num.push(c);
-                if let Some(c) = self.read()? {
+                if let Some(c) = self.peek(0)? {
                     if c == '-' || c == '+' {
+                        self.consume()?;
                         num.push(c);
-                    } else if c.is_digit(10) {
-                        self.putback(c);
-                    } else {
+                    } else if !c.is_digit(10) {
                         // ended on E
-                        return Result::Err(LexerError::MalformedFloat);
+                        return Err(LexerError::MalformedFloat(self.source_position.clone()));
                     }
                 } else {
                     // EOF reached on ended E
-                    return Result::Err(LexerError::MalformedFloat);
+                    return Err(LexerError::MalformedFloat(self.source_position.clone()));
                 }
 
-                num.push_str( &self.scan_base(10)?);
-                Result::Ok(
-                    true
-                )
+                num.push_str(&self.scan_base(10)?);
+                Ok(true)
             } else {
-                self.putback(c);
-                Result::Ok(false)
+                Ok(false)
             }
         } else {
-            Result::Ok(false)
+            Ok(false)
         }
     }
 
@@ -462,42 +597,46 @@ impl<R: Read> Lexer<R> {
     fn scan_ident(&mut self) -> Result<String> {
         let mut ident = String::new();
 
-        while let Some(c) = self.read()? {
-            if !c.is_alphanumeric() {
-                self.putback(c);
+        while let Some(c) = self.peek(0)? {
+            if !(c.is_alphanumeric() || c == '_') {
                 break;
             }
 
+            self.consume()?;
             ident.push(c);
         }
 
-        Result::Ok(ident)
+        Ok(ident)
     }
 
     fn scan_string(&mut self) -> Result<String> {
         let mut str = String::new();
 
-        while let Some(c) = self.read()? {
-            if c == '\"' {
-                return Result::Ok(str);
+        while let Some(c) = self.peek(0)? {
+            if c == '\n' {
+                return Err(LexerError::UnterminatedString(self.source_position.clone()));
             }
 
-            if c == '\n' {
-                return Result::Err(LexerError::UnterminatedString);
+            self.consume()?;
+
+            if c == '\"' {
+                return Ok(str);
             }
 
             if c == '\\' {
-                if let Some(escape_chr) = self.read()? {
+                if let Some(escape_chr) = self.peek(0)? {
                     match escape_chr {
                         'n' => str.push('\n'),
                         'r' => str.push('\r'),
                         't' => str.push('\t'),
                         '"' => str.push('\"'),
                         _ => {
-                            self.putback(escape_chr);
                             str.push('\\');
+                            continue;
                         }
                     }
+
+                    self.consume()?;
                     continue;
                 }
             }
@@ -505,24 +644,24 @@ impl<R: Read> Lexer<R> {
             str.push(c);
         }
 
-        Result::Err(LexerError::UnterminatedString)
+        Err(LexerError::UnterminatedString(self.source_position.clone()))
     }
 
     fn scan_char(&mut self) -> Result<char> {
-        // ? NOTE: I didn't putback on error since string doesn't do that as well
-
-        if let Some(c) = self.read()? {
-            if let Some(c2) = self.read()? {
+        if let Some(c) = self.peek(0)? {
+            self.consume()?;
+            if let Some(c2) = self.peek(0)? {
                 if c2 == '\'' {
-                    return Result::Ok(c);
+                    self.consume()?;
+                    return Ok(c);
                 } else {
-                    return Result::Err(LexerError::CharacterConstantTooLong);
+                    return Err(LexerError::CharacterConstantTooLong(self.source_position.clone()));
                 }
             } else {
-                return Result::Err(LexerError::UnterminatedCharacterConstant);
+                return Err(LexerError::UnterminatedCharacterConstant(self.source_position.clone()));
             }
         } else {
-            return Result::Err(LexerError::UnterminatedCharacterConstant);
+            return Err(LexerError::UnterminatedCharacterConstant(self.source_position.clone()));
         }
     }
 }

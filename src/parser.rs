@@ -96,10 +96,10 @@ impl<R: Read> Parser<R> {
     }
 
     fn factor(&mut self) -> Result<AST> {
-        let t = self.lexer.peek()?;
+        let t = self.lexer.peek_token()?;
 
         if t == &Tokens::LPARENT {
-            self.lexer.consume();
+            self.lexer.consume_token();
             let tree = self.assign()?;
             self.expect(Tokens::RPARENT)?;
             Result::Ok(tree)
@@ -121,7 +121,7 @@ impl<R: Read> Parser<R> {
                         Tokens::IDENT(v) => Operation::IDENT(v.clone()),
                         _ => return Result::Err(ParserError::SyntaxError),
                     };
-                    self.lexer.consume();
+                    self.lexer.consume_token();
                     v
                 },
                 left: None,
@@ -131,13 +131,13 @@ impl<R: Read> Parser<R> {
     }
 
     fn unary(&mut self) -> Result<AST> {
-        match *self.lexer.peek()? {
+        match *self.lexer.peek_token()? {
             Tokens::PLUS => {
-                self.lexer.consume();
+                self.lexer.consume_token();
                 self.unary()
             } // literally useless
             Tokens::MINUS => {
-                self.lexer.consume();
+                self.lexer.consume_token();
                 Result::Ok(AST {
                     op: Operation::NEGATE,
                     left: Some(Box::new(self.unary()?)),
@@ -145,7 +145,7 @@ impl<R: Read> Parser<R> {
                 })
             }
             Tokens::BITNOT => {
-                self.lexer.consume();
+                self.lexer.consume_token();
                 Result::Ok(AST {
                     op: Operation::BITNOT,
                     left: Some(Box::new(self.unary()?)),
@@ -223,11 +223,11 @@ impl<R: Read> Parser<R> {
         loop {
             left = AST {
                 op: {
-                    let v = match matcher(self.lexer.peek()?) {
+                    let v = match matcher(self.lexer.peek_token()?) {
                         Some(v) => v,
                         None => break Result::Ok(left),
                     };
-                    self.lexer.consume();
+                    self.lexer.consume_token();
                     v
                 },
                 left: Some(Box::new(left)),
@@ -239,8 +239,8 @@ impl<R: Read> Parser<R> {
     fn assign(&mut self) -> Result<AST> {
         let left = self.bitwise_or()?;
 
-        if *self.lexer.peek()? == Tokens::ASSIGN {
-            self.lexer.consume();
+        if *self.lexer.peek_token()? == Tokens::ASSIGN {
+            self.lexer.consume_token();
             Result::Ok(AST {
                 op: Operation::ASSIGN,
                 left: Some(Box::new(left)),
@@ -252,14 +252,14 @@ impl<R: Read> Parser<R> {
     }
 
     fn statement(&mut self) -> Result<Option<AST>> {
-        let t = self.lexer.peek()?;
+        let t = self.lexer.peek_token()?;
 
         if t == &Tokens::LBRACE {
             self.compound_statement()
         } else {
             // expression statement is optional
             if t == &Tokens::SEMICOLON {
-                self.lexer.consume();
+                self.lexer.consume_token();
                 return Result::Ok(None);
             }
 
@@ -274,7 +274,7 @@ impl<R: Read> Parser<R> {
 
         let mut parent: Option<AST> = None;
 
-        while self.lexer.peek()? != &Tokens::RBRACE {
+        while self.lexer.peek_token()? != &Tokens::RBRACE {
             if let Some(right) = self.statement()? {
                 if let Some(left) = parent {
                     parent = Some(AST {

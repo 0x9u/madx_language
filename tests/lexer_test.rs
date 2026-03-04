@@ -1,7 +1,6 @@
-
 #[cfg(test)]
 mod tests {
-    use madx_language::lexer::{Lexer, LexerError, Tokens};
+    use madx_language::lexer::{Lexer, LexerError, SourcePosition, Tokens};
 
     #[test]
     fn scans_long_number() -> Result<(), LexerError> {
@@ -18,7 +17,6 @@ mod tests {
 
     #[test]
     fn scans_math_expression() -> Result<(), LexerError> {
-        
         let input = "1 + 1 * 2 / 4 - 9 % 5";
 
         let mut lexer = Lexer::new(input.as_bytes())?;
@@ -212,12 +210,62 @@ mod tests {
     }
 
     #[test]
+    fn ignores_line_comment() -> Result<(), LexerError> {
+        let input = "// testing \n// testing 1234 // \n 2";
+        let mut lexer = Lexer::new(input.as_bytes())?;
+        assert_eq!(lexer.take()?, Tokens::NUMBER("2".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn ignores_block_comment() -> Result<(), LexerError> {
+        let input = "/* testing \n testing 1234 // */ \n 2";
+        let mut lexer = Lexer::new(input.as_bytes())?;
+        assert_eq!(lexer.take()?, Tokens::NUMBER("2".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn error_on_unterminated_comment() -> Result<(), LexerError> {
+        let input = "/* testing \n testing 1234 \n 2";
+        let mut lexer = Lexer::new(input.as_bytes())?;
+        assert_eq!(
+            lexer.take(),
+            Err(LexerError::UnterminatedComment(SourcePosition {
+                line_position: 1,
+                column_position: 0
+            }))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn error_on_unrecognised_character() -> Result<(), LexerError> {
+        let input = "`";
+        let mut lexer = Lexer::new(input.as_bytes())?;
+        assert_eq!(
+            lexer.take(),
+            Err(LexerError::UnrecognisedCharacter(SourcePosition {
+                line_position: 1,
+                column_position: 0
+            }))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn error_on_unterminated_string_eof() -> Result<(), LexerError> {
         let input = "\"string";
 
         let mut lexer = Lexer::new(input.as_bytes())?;
 
-        assert_eq!(lexer.take(), Result::Err(LexerError::UnterminatedString));
+        assert_eq!(
+            lexer.take(),
+            Result::Err(LexerError::UnterminatedString(SourcePosition {
+                column_position: 7,
+                line_position: 1
+            }))
+        );
 
         Ok(())
     }
@@ -228,10 +276,16 @@ mod tests {
 
         let mut lexer = Lexer::new(input.as_bytes())?;
 
-        assert_eq!(lexer.take(), Result::Err(LexerError::UnterminatedString));
+        assert_eq!(
+            lexer.take(),
+            Result::Err(LexerError::UnterminatedString(SourcePosition {
+                line_position: 1,
+                column_position: 5
+            }))
+        );
 
         Ok(())
-    } 
+    }
 
     #[test]
     fn error_on_unterminated_char() -> Result<(), LexerError> {
@@ -239,7 +293,13 @@ mod tests {
 
         let mut lexer = Lexer::new(input.as_bytes())?;
 
-        assert_eq!(lexer.take(), Result::Err(LexerError::UnterminatedCharacterConstant));
+        assert_eq!(
+            lexer.take(),
+            Result::Err(LexerError::UnterminatedCharacterConstant(SourcePosition {
+                line_position: 1,
+                column_position: 2
+            }))
+        );
 
         Ok(())
     }
@@ -250,7 +310,13 @@ mod tests {
 
         let mut lexer = Lexer::new(input.as_bytes())?;
 
-        assert_eq!(lexer.take(), Result::Err(LexerError::UnterminatedCharacterConstant));
+        assert_eq!(
+            lexer.take(),
+            Result::Err(LexerError::UnterminatedCharacterConstant(SourcePosition {
+                line_position: 1,
+                column_position: 1
+            }))
+        );
 
         Ok(())
     }
@@ -261,7 +327,13 @@ mod tests {
 
         let mut lexer = Lexer::new(input.as_bytes())?;
 
-        assert_eq!(lexer.take(), Result::Err(LexerError::CharacterConstantTooLong));
+        assert_eq!(
+            lexer.take(),
+            Result::Err(LexerError::CharacterConstantTooLong(SourcePosition {
+                line_position: 1,
+                column_position: 2
+            }))
+        );
 
         Ok(())
     }

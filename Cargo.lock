@@ -19,6 +19,7 @@ name = "madx_language"
 version = "0.1.0"
 dependencies = [
  "ordered-float",
+ "peekread",
  "thiserror",
  "utf8-chars",
 ]
@@ -40,6 +41,12 @@ checksum = "7f4779c6901a562440c3786d08192c6fbda7c1c2060edd10006b05ee35d10f2d"
 dependencies = [
  "num-traits",
 ]
+
+[[package]]
+name = "peekread"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "978122cdc72f39ed3c6343907453570570699169aace43dd09d46b52cc5f681d"
 
 [[package]]
 name = "proc-macro2"

@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use madx_language::lexer::{Lexer, LexerError};
+    use madx_language::lexer::Lexer;
     use madx_language::parser::{AST, Operation, Parser, ParserError};
 
     macro_rules! ast_tree {
